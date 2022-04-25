@@ -23,6 +23,7 @@ const { sequelize } = require('./models');
 const passportConfig = require('./passport');
 const sse = require('./sse');
 const webSocket = require('./socket');
+const checkAuction = require('./lib/checkAuction');
 
 /*
 * express app 객체를 생성합니다.
@@ -44,6 +45,14 @@ app.set('port', process.env.PORT || 8010);
 * 사용자 인증 정책을 적용합니다.
 * */
 passportConfig();
+
+/*
+* 생성된 지 24 시간이 넘은 경매 물품에 대한 낙찰자 처리를 수행합니다.
+* 예기치 않은 서버 중단으로 인해 재기동하였을 경우,
+* 그 사이의 시간 동안 처리되지 못한 낙찰자 선정 작업들을
+* 재기동 시점에서라도 해 두기 위함입니다.
+* */
+checkAuction();
 
 /*
 * 렌더링 엔진으로서 nunjucks 를 사용하도록 설정합니다.

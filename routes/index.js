@@ -9,6 +9,8 @@ const path = require('path');
 * */
 const express = require('express');
 const multer = require('multer');
+const sequelize = require('sequelize');
+const schedule = require('node-schedule');
 
 /*
 * import : user-defined modules
@@ -91,6 +93,30 @@ router.get('/join',
 );
 
 /*
+* GET /list
+* 낙찰된 경매 물품 목록 페이지를 렌더링하여 클라이언트에게 응답합니다.
+* */
+router.get('/list',
+  isLoggedIn,
+  async (req, res, next) => {
+    try {
+      const goods = await Good.findAll({
+        where: { SoldId: req.user.id, },
+        include: { model: Auction, },
+        order: [[{ model: Auction }, 'bid', 'DESC'],],
+      });
+      res.render('list', {
+        title: '낙찰 목록 - NodeAuction',
+        goods,
+      });
+    } catch (error) {
+      console.error(`[get goods] ${req.method} ${req.url} failed with : `, error);
+      next(error);
+    }
+  }
+);
+
+/*
 * GET /good
 * 상품 등록 페이지를 렌더링하여 클라이언트에게 응답합니다.
 * */
@@ -108,17 +134,56 @@ router.get('/good',
 * 새 상품을 등록합니다.
 * */
 router.post('/good',
-  isLoggedIn,   // 로그인 중이지 않은데 로그인 요청을 보내는 것을 막기 위한 미들웨어입니다.
+  isLoggedIn,   // 로그인 되지 않은 클라이언트의 새 경매 물품 등록 요청을 막기 위한 미들웨어입니다.
   upload.single('img'),
   async (req, res, next) => {
     try {
       const { name, price, } = req.body;
-      await Good.create({
+      const good = await Good.create({
         OwnerId: req.user.id,
         name,
         img: req.file.filename,
         price,
       });
+
+      /*
+      * end : 지금으로부터 하루 뒤 시간 설정
+      * */
+      const end = new Date();
+      end.setDate(end.getDate() + 1);
+
+      /*
+      * 지금으로부터 하루 뒤에 실행될 스케줄 작업을 등록합니다.
+      * 지금으로부터 하루 동안 받은 입찰 내역들 중에서 가장 높은 입찰가를 기록한 입찰자를 최종 낙찰자로 처리합니다.
+      * */
+      schedule.scheduleJob(end, async () => {
+
+        // 가장 높은 입찰가를 부른 입찰 기록을 조회합니다.
+        const finalBidding = await Auction.findOne({
+          where: { GoodId: good.id, },
+          order: [['bid', 'DESC'],],
+        });
+
+        // 해당 입찰 기록의 입찰자를, 등록된 상품의 최종 낙찰자로 처리합니다.
+        await Good.update({
+          SoldId: finalBidding.UserId,
+        }, {
+          where: { id: good.id, },
+        });
+
+        // 낙찰자의 보유 자산 값을 낙찰 가격만큼 차감 처리합니다.
+        await User.update({
+          money: sequelize.literal(`money - ${finalBidding.bid}`),
+        }, {
+          where: { id: finalBidding.UserId, },
+        });
+      });
+
+      /*
+      * 클라이언트를 메인 페이지로 리디렉션 시킵니다.
+      * */
+      res.redirect('/');
+
     } catch (error) {
       console.error(`[register goods] ${req.method} ${req.url} failed with : `, error);
       next(error);
